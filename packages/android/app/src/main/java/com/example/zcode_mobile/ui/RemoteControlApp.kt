@@ -628,13 +628,12 @@ private fun RemoteControlWebViewScreen(
         .calculateTopPadding()
     val stripColor = pageBackground
         ?: if (effectiveDark) NeutralDarkBackground else NeutralLightBackground
-    // 小舌片本身不占布局高度：收起时半贴在状态栏条下沿，展开时半贴在 Header 下沿。
-    val headerTabHeight = 16.dp
+    // 小舌片不占布局高度：完全贴在条/Header 下沿之外，盖住页面第一行内容。
     val headerHeightDp = with(LocalDensity.current) { headerHeightPx.toDp() }
     val headerTabOffset = if (headerVisible) {
-        statusBarInset + headerHeightDp - headerTabHeight / 2
+        statusBarInset + headerHeightDp
     } else {
-        statusBarInset - headerTabHeight / 2
+        statusBarInset
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -1149,6 +1148,18 @@ private const val THEME_BRIDGE_SCRIPT = """
       notify();
       setTimeout(notify, 200);
     };
+    // App 壳已经自留了状态栏高度，去掉页面给移动浏览器预留的顶部内边距，
+    // 让主机名/首行内容直接贴住状态栏下沿（小舌片会盖住它）。
+    try {
+      var tweakId = 'zcode-android-shell-tweaks';
+      var tweak = document.getElementById(tweakId);
+      if (!tweak) {
+        tweak = document.createElement('style');
+        tweak.id = tweakId;
+        document.head.appendChild(tweak);
+      }
+      tweak.textContent = '[data-mobile-page="home"] [data-testid="sidebar-primary-navigation"]{padding-top:0 !important;}';
+    } catch (e) {}
     if (!window.__zcodeThemeBridgeInstalled) {
       window.__zcodeThemeBridgeInstalled = true;
       try {
