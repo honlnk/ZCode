@@ -694,8 +694,7 @@ private fun RemoteControlWebViewScreen(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .fillMaxWidth(),
-                        color = (if (effectiveDark) NeutralDarkSurface else NeutralLightSurface)
-                            .copy(alpha = 0.96f),
+                        color = if (effectiveDark) NeutralDarkSurface else NeutralLightSurface,
                         contentColor = if (effectiveDark) NeutralDarkText else NeutralLightText,
                         tonalElevation = 3.dp,
                         shadowElevation = 2.dp,
