@@ -17,6 +17,8 @@
     <string name="remote_screen_title">Remote control</string>
     <string name="remote_reload_button">Reload</string>
     <string name="remote_close_button">Close</string>
+    <string name="remote_hide_header_button">Hide</string>
+    <string name="remote_show_header_button">Show</string>
     <string name="remote_retry_button">Retry</string>
     <string name="remote_load_failed_title">Could not load remote control</string>
     <string name="remote_keep_alive_title">ZCode remote control is active</string>

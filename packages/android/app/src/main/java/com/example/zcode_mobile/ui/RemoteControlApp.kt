@@ -27,6 +27,7 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -62,6 +64,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -416,6 +419,12 @@ private fun RemoteControlLauncher(
             .padding(20.dp),
         verticalArrangement = Arrangement.Center,
     ) {
+        Image(
+            painter = painterResource(R.drawable.zcode_logo),
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
+        )
+        Spacer(modifier = Modifier.height(16.dp))
         Text(
             text = stringResource(R.string.remote_launcher_title),
             style = MaterialTheme.typography.headlineSmall,
@@ -529,6 +538,8 @@ private fun RemoteControlWebViewScreen(
     var progress by remember { mutableStateOf(0) }
     var isLoading by remember { mutableStateOf(true) }
     var pageError by remember { mutableStateOf<String?>(null) }
+    // Header 悬浮覆盖在网页之上、不占内容高度；可隐藏，隐藏后只留右上角小按钮唤出。
+    var headerVisible by rememberSaveable { mutableStateOf(true) }
 
     BackHandler {
         val view = webView
@@ -548,58 +559,84 @@ private fun RemoteControlWebViewScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        RemoteControlTopBar(
-            remoteUrl = remoteUrl,
-            isLoading = isLoading,
-            onReload = {
-                pageError = null
-                webView?.reload()
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = {
+                createRemoteControlWebView(
+                    context = context,
+                    popupDialogs = popupDialogs,
+                    onLoadingChanged = { loading ->
+                        isLoading = loading
+                    },
+                    onProgressChanged = { nextProgress ->
+                        progress = nextProgress
+                    },
+                    onMainFrameError = { message ->
+                        pageError = message
+                    },
+                ).also { view ->
+                    webView = view
+                    view.loadUrl(remoteUrl)
+                }
             },
-            onClose = onCloseRemote,
+            update = { view ->
+                if (view.url != remoteUrl) {
+                    pageError = null
+                    view.loadUrl(remoteUrl)
+                }
+            },
         )
-        if (isLoading) {
-            LinearProgressIndicator(
-                progress = { (progress.coerceIn(0, 100) / 100f) },
-                modifier = Modifier.fillMaxWidth(),
+        if (pageError != null) {
+            RemoteControlErrorOverlay(
+                message = pageError.orEmpty(),
+                onRetry = {
+                    pageError = null
+                    webView?.reload()
+                },
             )
         }
-        Box(modifier = Modifier.fillMaxSize()) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = {
-                    createRemoteControlWebView(
-                        context = context,
-                        popupDialogs = popupDialogs,
-                        onLoadingChanged = { loading ->
-                            isLoading = loading
+        if (headerVisible) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                tonalElevation = 3.dp,
+                shadowElevation = 2.dp,
+            ) {
+                Column {
+                    RemoteControlTopBar(
+                        remoteUrl = remoteUrl,
+                        isLoading = isLoading,
+                        onReload = {
+                            pageError = null
+                            webView?.reload()
                         },
-                        onProgressChanged = { nextProgress ->
-                            progress = nextProgress
-                        },
-                        onMainFrameError = { message ->
-                            pageError = message
-                        },
-                    ).also { view ->
-                        webView = view
-                        view.loadUrl(remoteUrl)
+                        onHide = { headerVisible = false },
+                        onClose = onCloseRemote,
+                    )
+                    if (isLoading) {
+                        LinearProgressIndicator(
+                            progress = { (progress.coerceIn(0, 100) / 100f) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
-                },
-                update = { view ->
-                    if (view.url != remoteUrl) {
-                        pageError = null
-                        view.loadUrl(remoteUrl)
-                    }
-                },
-            )
-            if (pageError != null) {
-                RemoteControlErrorOverlay(
-                    message = pageError.orEmpty(),
-                    onRetry = {
-                        pageError = null
-                        webView?.reload()
-                    },
-                )
+                }
+            }
+        } else {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(8.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                shadowElevation = 2.dp,
+            ) {
+                TextButton(onClick = { headerVisible = true }) {
+                    Text(stringResource(R.string.remote_show_header_button))
+                }
             }
         }
     }
@@ -610,6 +647,7 @@ private fun RemoteControlTopBar(
     remoteUrl: String,
     isLoading: Boolean,
     onReload: () -> Unit,
+    onHide: () -> Unit,
     onClose: () -> Unit,
 ) {
     Row(
@@ -641,6 +679,9 @@ private fun RemoteControlTopBar(
                 strokeWidth = 2.dp,
             )
             Spacer(modifier = Modifier.width(8.dp))
+        }
+        TextButton(onClick = onHide) {
+            Text(stringResource(R.string.remote_hide_header_button))
         }
         TextButton(onClick = onReload) {
             Text(stringResource(R.string.remote_reload_button))

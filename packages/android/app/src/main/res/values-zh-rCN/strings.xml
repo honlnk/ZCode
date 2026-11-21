@@ -18,6 +18,8 @@
     <string name="remote_screen_title">远程控制</string>
     <string name="remote_reload_button">重载</string>
     <string name="remote_close_button">关闭</string>
+    <string name="remote_hide_header_button">隐藏</string>
+    <string name="remote_show_header_button">显示</string>
     <string name="remote_retry_button">重试</string>
     <string name="remote_load_failed_title">远程控制加载失败</string>
     <string name="remote_keep_alive_title">ZCode 远程控制运行中</string>
