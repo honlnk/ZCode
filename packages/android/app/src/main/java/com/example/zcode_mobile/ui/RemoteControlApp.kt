@@ -48,12 +48,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -84,7 +85,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -571,8 +574,10 @@ private fun RemoteControlWebViewScreen(
     var progress by remember { mutableStateOf(0) }
     var isLoading by remember { mutableStateOf(true) }
     var pageError by remember { mutableStateOf<String?>(null) }
-    // Header 悬浮覆盖在网页之上、不占内容高度；可隐藏，隐藏后只留状态栏右侧的小箭头。
+    // Header 悬浮覆盖在网页之上、不占内容高度；可隐藏，隐藏后只留状态栏下沿的小舌片。
     var headerVisible by rememberSaveable { mutableStateOf(true) }
+    // 实测 Header 高度，用于把展开/收起舌片贴到 Header 下沿。
+    var headerHeightPx by remember { mutableStateOf(0) }
     // 页面实际主题由 WebView 内注入的 JS 桥上报：顶部留白带与状态栏图标跟着页面走，
     // 避免“页面深色、App 控件浅色”的割裂。
     var pageBackground by remember { mutableStateOf<Color?>(null) }
@@ -621,29 +626,26 @@ private fun RemoteControlWebViewScreen(
     val statusBarInset = WindowInsets.statusBars
         .asPaddingValues()
         .calculateTopPadding()
-    // 状态栏高度之外再留一行，放展开/收起箭头，避免和系统状态栏图标重叠。
-    val headerStripHeight = statusBarInset + 24.dp
     val stripColor = pageBackground
         ?: if (effectiveDark) NeutralDarkBackground else NeutralLightBackground
+    // 小舌片本身不占布局高度：收起时半贴在状态栏条下沿，展开时半贴在 Header 下沿。
+    val headerTabHeight = 16.dp
+    val headerHeightDp = with(LocalDensity.current) { headerHeightPx.toDp() }
+    val headerTabOffset = if (headerVisible) {
+        statusBarInset + headerHeightDp - headerTabHeight / 2
+    } else {
+        statusBarInset - headerTabHeight / 2
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 状态栏留白：纯色带跟随页面主题，底部右侧是唯一的展开/收起箭头。
+            // 状态栏留白：纯色带跟随页面主题，只占状态栏高度本身。
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(headerStripHeight)
+                    .height(statusBarInset)
                     .background(stripColor),
-            ) {
-                HeaderToggleButton(
-                    expanded = headerVisible,
-                    dark = effectiveDark,
-                    onClick = { headerVisible = !headerVisible },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 10.dp, bottom = 2.dp),
-                )
-            }
+            )
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -693,7 +695,8 @@ private fun RemoteControlWebViewScreen(
                     Surface(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .fillMaxWidth(),
+                            .fillMaxWidth()
+                            .onSizeChanged { headerHeightPx = it.height },
                         color = if (effectiveDark) NeutralDarkSurface else NeutralLightSurface,
                         contentColor = if (effectiveDark) NeutralDarkText else NeutralLightText,
                         tonalElevation = 3.dp,
@@ -721,6 +724,15 @@ private fun RemoteControlWebViewScreen(
                 }
             }
         }
+        // 唯一的小舌片，浮在最上层：随 Header 展开/收起移动，不占用布局高度。
+        HeaderToggleButton(
+            expanded = headerVisible,
+            dark = effectiveDark,
+            onClick = { headerVisible = !headerVisible },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = headerTabOffset),
+        )
     }
 }
 
@@ -781,7 +793,7 @@ private fun RemoteControlTopBar(
     }
 }
 
-/** 状态栏留白带里的小型半透明箭头：向下展开 Header，向上收起。 */
+/** 贴边小舌片：向下展开 Header，向上收起；不占布局高度，只浮在条/Header 下沿。 */
 @Composable
 private fun HeaderToggleButton(
     expanded: Boolean,
@@ -790,40 +802,40 @@ private fun HeaderToggleButton(
     modifier: Modifier = Modifier,
 ) {
     val chevronColor = if (dark) {
-        Color.White.copy(alpha = 0.78f)
+        Color.White.copy(alpha = 0.72f)
     } else {
-        Color.Black.copy(alpha = 0.55f)
+        Color.Black.copy(alpha = 0.50f)
     }
-    val circleColor = if (dark) {
-        Color.White.copy(alpha = 0.14f)
+    val tabColor = if (dark) {
+        Color.White.copy(alpha = 0.16f)
     } else {
-        Color.Black.copy(alpha = 0.08f)
+        Color.Black.copy(alpha = 0.10f)
     }
     Box(
         modifier = modifier
-            .size(22.dp)
-            .clip(CircleShape)
-            .background(circleColor)
+            .size(width = 32.dp, height = 16.dp)
+            .clip(RoundedCornerShape(bottomStart = 6.dp, bottomEnd = 6.dp))
+            .background(tabColor)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(modifier = Modifier.size(9.dp)) {
+        Canvas(modifier = Modifier.size(width = 10.dp, height = 5.dp)) {
             val path = Path().apply {
                 if (expanded) {
-                    moveTo(0f, size.height * 0.68f)
-                    lineTo(size.width / 2f, size.height * 0.32f)
-                    lineTo(size.width, size.height * 0.68f)
+                    moveTo(0f, size.height)
+                    lineTo(size.width / 2f, 0f)
+                    lineTo(size.width, size.height)
                 } else {
-                    moveTo(0f, size.height * 0.32f)
-                    lineTo(size.width / 2f, size.height * 0.68f)
-                    lineTo(size.width, size.height * 0.32f)
+                    moveTo(0f, 0f)
+                    lineTo(size.width / 2f, size.height)
+                    lineTo(size.width, 0f)
                 }
             }
             drawPath(
                 path = path,
                 color = chevronColor,
                 style = Stroke(
-                    width = 1.5.dp.toPx(),
+                    width = 1.4.dp.toPx(),
                     cap = StrokeCap.Round,
                     join = StrokeJoin.Round,
                 ),
