@@ -2,12 +2,15 @@ package com.example.zcode_mobile.ui
 
 import android.annotation.SuppressLint
 import android.Manifest
+import android.app.Dialog
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Message
 import android.view.ViewGroup
+import android.view.Window
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -521,6 +524,8 @@ private fun RemoteControlWebViewScreen(
 ) {
     val context = LocalContext.current
     var webView by remember { mutableStateOf<WebView?>(null) }
+    // OAuth 登录弹窗（window.open）持有的对话框；页面销毁时统一关闭。
+    val popupDialogs = remember { mutableListOf<Dialog>() }
     var progress by remember { mutableStateOf(0) }
     var isLoading by remember { mutableStateOf(true) }
     var pageError by remember { mutableStateOf<String?>(null) }
@@ -536,6 +541,8 @@ private fun RemoteControlWebViewScreen(
 
     DisposableEffect(Unit) {
         onDispose {
+            popupDialogs.forEach { runCatching { it.dismiss() } }
+            popupDialogs.clear()
             webView?.destroy()
             webView = null
         }
@@ -563,6 +570,7 @@ private fun RemoteControlWebViewScreen(
                 factory = {
                     createRemoteControlWebView(
                         context = context,
+                        popupDialogs = popupDialogs,
                         onLoadingChanged = { loading ->
                             isLoading = loading
                         },
@@ -681,6 +689,7 @@ private fun RemoteControlErrorOverlay(
 @SuppressLint("SetJavaScriptEnabled")
 private fun createRemoteControlWebView(
     context: android.content.Context,
+    popupDialogs: MutableList<Dialog>,
     onLoadingChanged: (Boolean) -> Unit,
     onProgressChanged: (Int) -> Unit,
     onMainFrameError: (String) -> Unit,
@@ -693,6 +702,7 @@ private fun createRemoteControlWebView(
             ViewGroup.LayoutParams.MATCH_PARENT,
         )
         overScrollMode = WebView.OVER_SCROLL_NEVER
+        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -704,11 +714,28 @@ private fun createRemoteControlWebView(
             allowFileAccess = false
             allowContentAccess = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            javaScriptCanOpenWindowsAutomatically = true
+            setSupportMultipleWindows(true)
             userAgentString = "$userAgentString ZCodeAndroid/${BuildConfig.VERSION_NAME}"
         }
         webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 onProgressChanged(newProgress)
+            }
+
+            // v4 登录用 window.open 弹窗完成 OAuth。必须承接下来，否则页面收到 null
+            // 并报 "Authorization popup was blocked"，登录无法完成。
+            override fun onCreateWindow(
+                view: WebView,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: Message,
+            ): Boolean {
+                val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                val created = createRemoteControlPopup(view, popupDialogs) ?: return false
+                transport.webView = created.second
+                resultMsg.sendToTarget()
+                return true
             }
         }
         webViewClient = object : WebViewClient() {
@@ -728,12 +755,13 @@ private fun createRemoteControlWebView(
                     return false
                 }
 
-                val resolved = RemoteControlUrlPolicy.resolve(request.url)
-                if (resolved != null) {
-                    if (request.url.scheme == "zcode") {
-                        view.loadUrl(resolved)
-                        return true
-                    }
+                if (request.url.scheme == "zcode") {
+                    RemoteControlUrlPolicy.resolve(request.url)?.let { view.loadUrl(it) }
+                    return true
+                }
+
+                // 远控入口与 OAuth 域族留在 App 内，登录态才不会丢在系统浏览器里。
+                if (RemoteControlUrlPolicy.isInAppNavigationAllowed(request.url)) {
                     return false
                 }
 
@@ -754,6 +782,88 @@ private fun createRemoteControlWebView(
             }
         }
     }
+}
+
+/**
+ * 为 window.open 创建承载 OAuth 登录的临时弹窗 WebView。
+ * 弹窗与主 WebView 共享 Cookie 空间；授权完成回跳远控入口时关闭弹窗并把回调交给主页面。
+ * 返回 null 表示创建失败（调用方应让页面感知弹窗被拒绝）。
+ */
+@SuppressLint("SetJavaScriptEnabled")
+private fun createRemoteControlPopup(
+    parent: WebView,
+    popupDialogs: MutableList<Dialog>,
+): Pair<Dialog, WebView>? {
+    val context = parent.context
+    val dialog = Dialog(context)
+    runCatching { dialog.requestWindowFeature(Window.FEATURE_NO_TITLE) }
+    val popup = WebView(context)
+    CookieManager.getInstance().setAcceptThirdPartyCookies(popup, true)
+    popup.settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        mediaPlaybackRequiresUserGesture = false
+        setSupportZoom(false)
+        builtInZoomControls = false
+        displayZoomControls = false
+        allowFileAccess = false
+        allowContentAccess = false
+        mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        javaScriptCanOpenWindowsAutomatically = true
+        setSupportMultipleWindows(true)
+        userAgentString = parent.settings.userAgentString
+    }
+    popup.webChromeClient = object : WebChromeClient() {
+        override fun onCloseWindow(window: WebView) {
+            dialog.dismiss()
+        }
+    }
+    popup.webViewClient = object : WebViewClient() {
+        override fun shouldOverrideUrlLoading(
+            view: WebView,
+            request: WebResourceRequest,
+        ): Boolean {
+            if (!request.isForMainFrame) {
+                return false
+            }
+            val url = request.url
+            if (RemoteControlUrlPolicy.isRemoteEntryUrl(url)) {
+                // 授权完成回跳 /remote：把回调交给主 WebView 走 callback 登录，关闭弹窗。
+                parent.loadUrl(url.toString())
+                dialog.dismiss()
+                return true
+            }
+            if (RemoteControlUrlPolicy.isInAppNavigationAllowed(url, allowZcodeNonRemote = true)) {
+                return false
+            }
+            openExternalUrl(view.context, url)
+            return true
+        }
+    }
+    dialog.setContentView(
+        popup,
+        ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ),
+    )
+    dialog.window?.setLayout(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT,
+    )
+    dialog.setOnDismissListener {
+        popupDialogs.remove(dialog)
+        runCatching { popup.destroy() }
+    }
+    popupDialogs.add(dialog)
+    return runCatching { dialog.show() }.fold(
+        onSuccess = { dialog to popup },
+        onFailure = {
+            popupDialogs.remove(dialog)
+            runCatching { popup.destroy() }
+            null
+        },
+    )
 }
 
 private fun openExternalUrl(context: android.content.Context, uri: Uri) {

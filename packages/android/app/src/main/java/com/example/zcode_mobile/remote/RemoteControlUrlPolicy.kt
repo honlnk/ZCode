@@ -6,6 +6,10 @@ import com.example.zcode_mobile.BuildConfig
 private const val ZCODE_REMOTE_SCHEME = "zcode"
 private const val ZCODE_REMOTE_HOST = "remote"
 
+// 手机远控 v4 登录由官方 OAuth 提供方完成；这些域名族的主框架跳转必须留在 WebView 内，
+// 否则登录态会落在系统浏览器、App 永远等不到回调（表现为扫码后去浏览器登录且回不来）。
+private val IN_APP_AUTH_DOMAIN_SUFFIXES = listOf("z.ai", "bigmodel.cn", "zhipuai.cn")
+
 object RemoteControlUrlPolicy {
     fun resolve(raw: String?): String? {
         val trimmed = raw?.trim().orEmpty()
@@ -38,20 +42,38 @@ object RemoteControlUrlPolicy {
         return isAllowedRemoteUrl(uri)
     }
 
-    private fun buildDefaultRemoteUrl(uri: Uri): String {
-        val base = Uri.parse(BuildConfig.REMOTE_CONTROL_DEFAULT_URL).buildUpon()
-        uri.encodedQuery?.let { base.encodedQuery(it) }
-        uri.encodedFragment?.let { base.encodedFragment(it) }
-        return base.build().toString()
+    /** 远控入口本身：https://zcode.z.ai/remote*（生产包唯一入口）。 */
+    fun isRemoteEntryUrl(uri: Uri?): Boolean {
+        if (uri == null) return false
+        return uri.scheme?.lowercase() == "https" &&
+            uri.host?.lowercase() == "zcode.z.ai" &&
+            uri.path.orEmpty().startsWith("/remote")
     }
 
-    private fun isAllowedRemoteUrl(uri: Uri): Boolean {
+    /**
+     * 允许在 WebView 内继续主框架导航的地址。
+     * - 远控入口 /remote* 始终放行；
+     * - OAuth 域族（z.ai / bigmodel.cn / zhipuai.cn 及其子域）放行，保证登录不跳出 App；
+     * - zcode.z.ai 的非 /remote 路径只在登录弹窗内放行（allowZcodeNonRemote），主页面仍严格限制。
+     */
+    fun isInAppNavigationAllowed(uri: Uri?, allowZcodeNonRemote: Boolean = false): Boolean {
+        if (uri == null) {
+            return false
+        }
         val scheme = uri.scheme?.lowercase()
         val host = uri.host?.lowercase().orEmpty()
-        val path = uri.path.orEmpty()
 
-        if (scheme == "https" && host == "zcode.z.ai" && path.startsWith("/remote")) {
+        if (isRemoteEntryUrl(uri)) {
             return true
+        }
+
+        if (scheme == "https") {
+            if (host == "zcode.z.ai") {
+                return allowZcodeNonRemote
+            }
+            if (IN_APP_AUTH_DOMAIN_SUFFIXES.any { host == it || host.endsWith(".$it") }) {
+                return true
+            }
         }
 
         if (!BuildConfig.DEBUG) {
@@ -60,7 +82,34 @@ object RemoteControlUrlPolicy {
 
         // Bugfix: 开发机真机调试时二维码会指向局域网 Vite 地址。
         // 生产包仍只允许 zcode.z.ai，debug 包才放开测试域、本机和局域网 http/https，避免远控壳变成任意浏览器。
-        if (!path.startsWith("/remote")) {
+        if (!uri.path.orEmpty().startsWith("/remote")) {
+            return false
+        }
+        if (host == "zcode.z.ai") {
+            return scheme == "https"
+        }
+        return (scheme == "http" || scheme == "https") && isDebugHost(host)
+    }
+
+    private fun buildDefaultRemoteUrl(uri: Uri): String {
+        val base = Uri.parse(BuildConfig.REMOTE_CONTROL_DEFAULT_URL).buildUpon()
+        uri.encodedQuery?.let { base.encodedQuery(it) }
+        uri.encodedFragment?.let { base.encodedFragment(it) }
+        return base.build().toString()
+    }
+
+    private fun isAllowedRemoteUrl(uri: Uri): Boolean {
+        if (isRemoteEntryUrl(uri)) {
+            return true
+        }
+
+        if (!BuildConfig.DEBUG) {
+            return false
+        }
+
+        val scheme = uri.scheme?.lowercase()
+        val host = uri.host?.lowercase().orEmpty()
+        if (!uri.path.orEmpty().startsWith("/remote")) {
             return false
         }
         if (host == "zcode.z.ai") {
