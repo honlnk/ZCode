@@ -5,10 +5,10 @@
     android:viewportHeight="108">
     <!-- ZCode 官方 Z 标（取自 logo-zai.svg 的白色字形，居中于自适应图标安全区） -->
     <group
-        android:scaleX="5"
-        android:scaleY="5"
-        android:translateX="9.5"
-        android:translateY="10.2">
+        android:scaleX="4"
+        android:scaleY="4"
+        android:translateX="19"
+        android:translateY="18.93">
         <path
             android:fillColor="#FFFFFF"
             android:pathData="M9.03854 3.86902L8.2306 5.01755C8.1036 5.19645 7.89598 5.306 7.67092 5.306H3.26767V3.86328C3.26767 3.86902 9.03854 3.86902 9.03854 3.86902Z" />

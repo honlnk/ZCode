@@ -2,16 +2,21 @@ package com.example.zcode_mobile.ui
 
 import android.annotation.SuppressLint
 import android.Manifest
+import android.app.Activity
 import android.app.Dialog
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
+import android.util.Log
 import android.view.ViewGroup
 import android.view.Window
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -27,12 +32,19 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateTopPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,13 +52,15 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -56,6 +70,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,7 +78,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -71,6 +94,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.zcode_mobile.BuildConfig
@@ -79,6 +103,16 @@ import com.example.zcode_mobile.remote.RemoteControlRecentLink
 import com.example.zcode_mobile.remote.RemoteControlUrlPolicy
 import com.example.zcode_mobile.remote.displaySubtitle
 import com.example.zcode_mobile.remote.displayTitle
+import com.example.zcode_mobile.ui.theme.BrandBlue
+import com.example.zcode_mobile.ui.theme.BrandBlueDark
+import com.example.zcode_mobile.ui.theme.NeutralDarkBackground
+import com.example.zcode_mobile.ui.theme.NeutralDarkSubtle
+import com.example.zcode_mobile.ui.theme.NeutralDarkSurface
+import com.example.zcode_mobile.ui.theme.NeutralDarkText
+import com.example.zcode_mobile.ui.theme.NeutralLightBackground
+import com.example.zcode_mobile.ui.theme.NeutralLightSubtle
+import com.example.zcode_mobile.ui.theme.NeutralLightSurface
+import com.example.zcode_mobile.ui.theme.NeutralLightText
 import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -538,8 +572,15 @@ private fun RemoteControlWebViewScreen(
     var progress by remember { mutableStateOf(0) }
     var isLoading by remember { mutableStateOf(true) }
     var pageError by remember { mutableStateOf<String?>(null) }
-    // Header 悬浮覆盖在网页之上、不占内容高度；可隐藏，隐藏后只留右上角小按钮唤出。
+    // Header 悬浮覆盖在网页之上、不占内容高度；可隐藏，隐藏后只留状态栏右侧的小箭头。
     var headerVisible by rememberSaveable { mutableStateOf(true) }
+    // 页面实际主题由 WebView 内注入的 JS 桥上报：顶部留白带与状态栏图标跟着页面走，
+    // 避免“页面深色、App 控件浅色”的割裂。
+    var pageBackground by remember { mutableStateOf<Color?>(null) }
+    var pageDark by remember { mutableStateOf<Boolean?>(null) }
+    val systemDark = isSystemInDarkTheme()
+    val effectiveDark = pageBackground?.let { it.luminance() < 0.5f } ?: pageDark ?: systemDark
+    val view = LocalView.current
 
     BackHandler {
         val view = webView
@@ -559,83 +600,126 @@ private fun RemoteControlWebViewScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = {
-                createRemoteControlWebView(
-                    context = context,
-                    popupDialogs = popupDialogs,
-                    onLoadingChanged = { loading ->
-                        isLoading = loading
-                    },
-                    onProgressChanged = { nextProgress ->
-                        progress = nextProgress
-                    },
-                    onMainFrameError = { message ->
-                        pageError = message
-                    },
-                ).also { view ->
-                    webView = view
-                    view.loadUrl(remoteUrl)
-                }
-            },
-            update = { view ->
-                if (view.url != remoteUrl) {
-                    pageError = null
-                    view.loadUrl(remoteUrl)
-                }
-            },
-        )
-        if (pageError != null) {
-            RemoteControlErrorOverlay(
-                message = pageError.orEmpty(),
-                onRetry = {
-                    pageError = null
-                    webView?.reload()
-                },
-            )
+    // 状态栏/导航栏图标明暗与顶部留白带对立：浅色带用深色图标，深色带用浅色图标。
+    LaunchedEffect(effectiveDark) {
+        val window = (context as? Activity)?.window ?: return@LaunchedEffect
+        WindowCompat.getInsetsController(window, view).apply {
+            isAppearanceLightStatusBars = !effectiveDark
+            isAppearanceLightNavigationBars = !effectiveDark
         }
-        if (headerVisible) {
-            Surface(
+    }
+    // 离开远控页时恢复成 App 主题（跟随系统）的状态栏样式。
+    DisposableEffect(Unit) {
+        onDispose {
+            val window = (context as? Activity)?.window ?: return@onDispose
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !systemDark
+                isAppearanceLightNavigationBars = !systemDark
+            }
+        }
+    }
+
+    val statusBarInset = WindowInsets.statusBars
+        .asPaddingValues()
+        .calculateTopPadding()
+    // 状态栏高度之外再留一行，放展开/收起箭头，避免和系统状态栏图标重叠。
+    val headerStripHeight = statusBarInset + 24.dp
+    val stripColor = pageBackground
+        ?: if (effectiveDark) NeutralDarkBackground else NeutralLightBackground
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 状态栏留白：纯色带跟随页面主题，底部右侧是唯一的展开/收起箭头。
+            Box(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                tonalElevation = 3.dp,
-                shadowElevation = 2.dp,
+                    .fillMaxWidth()
+                    .height(headerStripHeight)
+                    .background(stripColor),
             ) {
-                Column {
-                    RemoteControlTopBar(
-                        remoteUrl = remoteUrl,
-                        isLoading = isLoading,
-                        onReload = {
+                HeaderToggleButton(
+                    expanded = headerVisible,
+                    dark = effectiveDark,
+                    onClick = { headerVisible = !headerVisible },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 10.dp, bottom = 2.dp),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = {
+                        createRemoteControlWebView(
+                            context = context,
+                            popupDialogs = popupDialogs,
+                            onPageThemeChanged = { background, dark ->
+                                pageBackground = background
+                                pageDark = dark
+                            },
+                            onLoadingChanged = { loading ->
+                                isLoading = loading
+                            },
+                            onProgressChanged = { nextProgress ->
+                                progress = nextProgress
+                            },
+                            onMainFrameError = { message ->
+                                pageError = message
+                            },
+                        ).also { view ->
+                            webView = view
+                            view.loadUrl(remoteUrl)
+                        }
+                    },
+                    update = { view ->
+                        if (view.url != remoteUrl) {
+                            pageError = null
+                            view.loadUrl(remoteUrl)
+                        }
+                    },
+                )
+                if (pageError != null) {
+                    RemoteControlErrorOverlay(
+                        message = pageError.orEmpty(),
+                        onRetry = {
                             pageError = null
                             webView?.reload()
                         },
-                        onHide = { headerVisible = false },
-                        onClose = onCloseRemote,
                     )
-                    if (isLoading) {
-                        LinearProgressIndicator(
-                            progress = { (progress.coerceIn(0, 100) / 100f) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
                 }
-            }
-        } else {
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(8.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-                shadowElevation = 2.dp,
-            ) {
-                TextButton(onClick = { headerVisible = true }) {
-                    Text(stringResource(R.string.remote_show_header_button))
+                if (headerVisible) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth(),
+                        color = (if (effectiveDark) NeutralDarkSurface else NeutralLightSurface)
+                            .copy(alpha = 0.96f),
+                        contentColor = if (effectiveDark) NeutralDarkText else NeutralLightText,
+                        tonalElevation = 3.dp,
+                        shadowElevation = 2.dp,
+                    ) {
+                        Column {
+                            RemoteControlTopBar(
+                                remoteUrl = remoteUrl,
+                                isLoading = isLoading,
+                                dark = effectiveDark,
+                                onReload = {
+                                    pageError = null
+                                    webView?.reload()
+                                },
+                                onClose = onCloseRemote,
+                            )
+                            if (isLoading) {
+                                LinearProgressIndicator(
+                                    progress = { (progress.coerceIn(0, 100) / 100f) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -646,14 +730,16 @@ private fun RemoteControlWebViewScreen(
 private fun RemoteControlTopBar(
     remoteUrl: String,
     isLoading: Boolean,
+    dark: Boolean,
     onReload: () -> Unit,
-    onHide: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val textColor = if (dark) NeutralDarkText else NeutralLightText
+    val subtleColor = if (dark) NeutralDarkSubtle else NeutralLightSubtle
+    val accentColor = if (dark) BrandBlueDark else BrandBlue
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .statusBarsPadding()
             .height(48.dp)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -664,30 +750,86 @@ private fun RemoteControlTopBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.titleSmall,
+                color = textColor,
             )
             Text(
                 text = remoteUrl,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = subtleColor,
             )
         }
         if (isLoading) {
             CircularProgressIndicator(
                 modifier = Modifier.size(18.dp),
+                color = accentColor,
                 strokeWidth = 2.dp,
             )
             Spacer(modifier = Modifier.width(8.dp))
         }
-        TextButton(onClick = onHide) {
-            Text(stringResource(R.string.remote_hide_header_button))
-        }
-        TextButton(onClick = onReload) {
+        TextButton(
+            onClick = onReload,
+            colors = ButtonDefaults.textButtonColors(contentColor = accentColor),
+        ) {
             Text(stringResource(R.string.remote_reload_button))
         }
-        TextButton(onClick = onClose) {
+        TextButton(
+            onClick = onClose,
+            colors = ButtonDefaults.textButtonColors(contentColor = textColor),
+        ) {
             Text(stringResource(R.string.remote_close_button))
+        }
+    }
+}
+
+/** 状态栏留白带里的小型半透明箭头：向下展开 Header，向上收起。 */
+@Composable
+private fun HeaderToggleButton(
+    expanded: Boolean,
+    dark: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val chevronColor = if (dark) {
+        Color.White.copy(alpha = 0.78f)
+    } else {
+        Color.Black.copy(alpha = 0.55f)
+    }
+    val circleColor = if (dark) {
+        Color.White.copy(alpha = 0.14f)
+    } else {
+        Color.Black.copy(alpha = 0.08f)
+    }
+    Box(
+        modifier = modifier
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(circleColor)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(9.dp)) {
+            val path = Path().apply {
+                if (expanded) {
+                    moveTo(0f, size.height * 0.68f)
+                    lineTo(size.width / 2f, size.height * 0.32f)
+                    lineTo(size.width, size.height * 0.68f)
+                } else {
+                    moveTo(0f, size.height * 0.32f)
+                    lineTo(size.width / 2f, size.height * 0.68f)
+                    lineTo(size.width, size.height * 0.32f)
+                }
+            }
+            drawPath(
+                path = path,
+                color = chevronColor,
+                style = Stroke(
+                    width = 1.5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round,
+                ),
+            )
         }
     }
 }
@@ -727,10 +869,11 @@ private fun RemoteControlErrorOverlay(
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 private fun createRemoteControlWebView(
     context: android.content.Context,
     popupDialogs: MutableList<Dialog>,
+    onPageThemeChanged: (Color?, Boolean) -> Unit,
     onLoadingChanged: (Boolean) -> Unit,
     onProgressChanged: (Int) -> Unit,
     onMainFrameError: (String) -> Unit,
@@ -744,6 +887,13 @@ private fun createRemoteControlWebView(
         )
         overScrollMode = WebView.OVER_SCROLL_NEVER
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+        addJavascriptInterface(
+            RemoteControlThemeBridge(
+                mainHandler = Handler(Looper.getMainLooper()),
+                publishTheme = onPageThemeChanged,
+            ),
+            THEME_BRIDGE_NAME,
+        )
         settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -786,6 +936,7 @@ private fun createRemoteControlWebView(
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 onLoadingChanged(false)
+                view?.evaluateJavascript(THEME_BRIDGE_SCRIPT, null)
             }
 
             override fun shouldOverrideUrlLoading(
@@ -913,3 +1064,103 @@ private fun openExternalUrl(context: android.content.Context, uri: Uri) {
         context.startActivity(intent)
     }
 }
+
+private const val THEME_BRIDGE_NAME = "ZCodeThemeBridge"
+private const val THEME_LOG_TAG = "ZCodeTheme"
+
+/**
+ * 页面主题桥：把 WebView 里页面实际使用的背景色报给 App。
+ * 顶部留白带与状态栏图标据此取反/同色，不再假设页面主题和系统主题一致。
+ */
+private class RemoteControlThemeBridge(
+    private val mainHandler: Handler,
+    private val publishTheme: (Color?, Boolean) -> Unit,
+) {
+    @JavascriptInterface
+    fun onThemeChanged(backgroundColor: String?, darkClass: Boolean) {
+        val parsed = parseCssColor(backgroundColor)
+        Log.i(THEME_LOG_TAG, "page theme: bg=$backgroundColor darkClass=$darkClass")
+        mainHandler.post { publishTheme(parsed, darkClass) }
+    }
+
+    /** 一次性诊断：确认 WebView 的 prefers-color-scheme 与页面存储的主题偏好。 */
+    @JavascriptInterface
+    fun onDiagnostics(info: String) {
+        Log.i(THEME_LOG_TAG, "theme diagnostics: $info")
+    }
+}
+
+private val CSS_RGB_PATTERN =
+    Regex("""rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*([0-9.]+))?\s*\)""")
+
+/** 解析 WebView getComputedStyle 返回的 rgb()/rgba() 颜色。 */
+private fun parseCssColor(raw: String?): Color? {
+    if (raw.isNullOrBlank()) {
+        return null
+    }
+    val match = CSS_RGB_PATTERN.find(raw.trim().lowercase()) ?: return null
+    val (red, green, blue, alphaText) = match.destructured
+    val alpha = alphaText.toFloatOrNull()?.let { (it * 255f).toInt().coerceIn(0, 255) } ?: 255
+    if (alpha < 32) {
+        return null
+    }
+    return Color(
+        red = red.toInt().coerceIn(0, 255),
+        green = green.toInt().coerceIn(0, 255),
+        blue = blue.toInt().coerceIn(0, 255),
+        alpha = alpha,
+    )
+}
+
+/**
+ * 页面加载完成后注入：监听 <html class> 变化（页面主题切换）与系统配色变化，实时上报。
+ * 页面自身是主题的唯一权威，App 只读不写，避免和 Web 端主题逻辑打架。
+ */
+private const val THEME_BRIDGE_SCRIPT = """
+(function () {
+  try {
+    var root = document.documentElement;
+    var readBackground = function () {
+      var bg = '';
+      try { bg = getComputedStyle(root).backgroundColor || ''; } catch (e) {}
+      if (!bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)') {
+        try { bg = getComputedStyle(document.body).backgroundColor || ''; } catch (e) {}
+      }
+      return bg;
+    };
+    var notify = function () {
+      try {
+        if (window.ZCodeThemeBridge && window.ZCodeThemeBridge.onThemeChanged) {
+          window.ZCodeThemeBridge.onThemeChanged(readBackground(), root.classList.contains('dark'));
+        }
+      } catch (e) {}
+    };
+    var scheduleNotify = function () {
+      notify();
+      setTimeout(notify, 200);
+    };
+    if (!window.__zcodeThemeBridgeInstalled) {
+      window.__zcodeThemeBridgeInstalled = true;
+      try {
+        new MutationObserver(scheduleNotify).observe(root, { attributes: true, attributeFilter: ['class'] });
+      } catch (e) {}
+      try {
+        var mq = window.matchMedia('(prefers-color-scheme: dark)');
+        if (mq.addEventListener) { mq.addEventListener('change', scheduleNotify); }
+        else if (mq.addListener) { mq.addListener(scheduleNotify); }
+      } catch (e) {}
+      try {
+        if (window.ZCodeThemeBridge && window.ZCodeThemeBridge.onDiagnostics) {
+          window.ZCodeThemeBridge.onDiagnostics(JSON.stringify({
+            stored: (function () { try { return localStorage.getItem('zcode-theme'); } catch (e) { return null; } })(),
+            mediaDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+            darkClass: root.classList.contains('dark'),
+            bg: readBackground()
+          }));
+        }
+      } catch (e) {}
+    }
+    notify();
+  } catch (e) {}
+})();
+"""

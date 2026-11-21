@@ -3,6 +3,7 @@ package com.example.zcode_mobile
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -12,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.view.WindowCompat
 import com.example.zcode_mobile.remote.RemoteControlKeepAliveService
 import com.example.zcode_mobile.remote.RemoteControlRecentLink
 import com.example.zcode_mobile.remote.RemoteControlRecentLinksStore
@@ -26,6 +28,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 状态栏/导航栏图标明暗跟随系统主题：深色背景用浅色图标，浅色背景用深色图标。
+        val isNightMode = (resources.configuration.uiMode and
+            Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !isNightMode
+            isAppearanceLightNavigationBars = !isNightMode
+        }
         if (BuildConfig.DEBUG) {
             android.webkit.WebView.setWebContentsDebuggingEnabled(true)
         }
