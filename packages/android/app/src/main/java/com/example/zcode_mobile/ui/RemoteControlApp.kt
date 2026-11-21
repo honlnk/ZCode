@@ -17,6 +17,7 @@ import android.view.ViewGroup
 import android.view.Window
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -586,6 +587,17 @@ private fun RemoteControlWebViewScreen(
     val effectiveDark = pageBackground?.let { it.luminance() < 0.5f } ?: pageDark ?: systemDark
     val view = LocalView.current
 
+    // 页面的“上传文件”（<input type="file">）需要宿主 App 接管：挂起回调，
+    // 由系统文件选择器选完后回填，取消/失败也要回 null，WebView 才能继续响应。
+    var pendingFileChooser by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+    val fileChooserLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val callback = pendingFileChooser
+        pendingFileChooser = null
+        callback?.onReceiveValue(parseFileChooserResult(result.resultCode, result.data))
+    }
+
     BackHandler {
         val view = webView
         if (view != null && view.canGoBack()) {
@@ -668,6 +680,16 @@ private fun RemoteControlWebViewScreen(
                             },
                             onMainFrameError = { message ->
                                 pageError = message
+                            },
+                            onShowFileChooser = { callback, params ->
+                                // 上一次选择若还没回填，先以取消收尾，否则 WebView 视为占用中。
+                                pendingFileChooser?.onReceiveValue(null)
+                                pendingFileChooser = callback
+                                runCatching { fileChooserLauncher.launch(params.createIntent()) }
+                                    .onFailure {
+                                        pendingFileChooser = null
+                                        callback.onReceiveValue(null)
+                                    }
                             },
                         ).also { view ->
                             webView = view
@@ -878,6 +900,27 @@ private fun RemoteControlErrorOverlay(
     }
 }
 
+/**
+ * 解析系统文件选择器的返回：多选在 clipData 里，单选在 data 上；取消/失败返回 null
+ * 并回调给 WebView，否则页面会一直认为文件选择器仍在使用中。
+ */
+private fun parseFileChooserResult(resultCode: Int, data: Intent?): Array<Uri>? {
+    if (resultCode != Activity.RESULT_OK || data == null) {
+        return null
+    }
+    val uris = buildList {
+        data.clipData?.let { clip ->
+            for (index in 0 until clip.itemCount) {
+                clip.getItemAt(index).uri?.let { add(it) }
+            }
+        }
+        if (isEmpty()) {
+            data.data?.let { add(it) }
+        }
+    }
+    return uris.takeIf { it.isNotEmpty() }?.toTypedArray()
+}
+
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 private fun createRemoteControlWebView(
     context: android.content.Context,
@@ -886,6 +929,7 @@ private fun createRemoteControlWebView(
     onLoadingChanged: (Boolean) -> Unit,
     onProgressChanged: (Int) -> Unit,
     onMainFrameError: (String) -> Unit,
+    onShowFileChooser: (ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams) -> Unit,
 ): WebView {
     CookieManager.getInstance().setAcceptCookie(true)
 
@@ -935,6 +979,17 @@ private fun createRemoteControlWebView(
                 val created = createRemoteControlPopup(view, popupDialogs) ?: return false
                 transport.webView = created.second
                 resultMsg.sendToTarget()
+                return true
+            }
+
+            // “上传文件”走 <input type="file">：WebView 不自带文件选择器，宿主不接管
+            // 时点击毫无反应（浏览器正常是因为 Chrome 自己实现了这条链路）。
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: WebChromeClient.FileChooserParams,
+            ): Boolean {
+                onShowFileChooser(filePathCallback, fileChooserParams)
                 return true
             }
         }
