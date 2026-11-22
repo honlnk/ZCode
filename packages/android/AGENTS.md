@@ -39,6 +39,7 @@ ZCode 手机远控的 Android 壳 App（`zcode-android`，包名 `com.example.zc
 - **主题桥**：页面是主题唯一权威，App 只读不写。`onPageFinished` 注入 `THEME_BRIDGE_SCRIPT`，经 `ZCodeThemeBridge` 上报页面背景色/dark class，顶部留白条与状态栏图标跟随页面主题；离开远控页恢复跟随系统。
 - **顶部小舌片 / Header**：Header 悬浮在网页之上不占内容高度，可收起；小舌片完全贴边、不占布局高度。注入的 shell tweaks 会去掉页面为移动浏览器预留的顶部内边距，改动前先理解这条联动。
 - **WebView 安全基线**：`allowFileAccess/allowContentAccess=false`、`MIXED_CONTENT_NEVER_ALLOW`、UA 追加 `ZCodeAndroid/<version>`；debug 才开 WebView 调试（`usesCleartextTraffic` 也是 debug-only placeholder）。
+- **软键盘**：`MainActivity` 必须保持 `android:windowSoftInputMode="adjustResize"`。不配置时系统解析为 `adjustPan`，WebView 不随键盘缩放，Chromium 可视区计算错误，每次选词上屏/移动光标页面会整体上跳 ~550px（偶发，取决于输入框当时位置）；spec 见根仓库 `docs/mobile-remote-control-android.md`「软键盘与输入」。
 - **保活通知**：显式设置 `largeIcon` 为当前 Logo（vivo 等定制系统读应用图标缓存，换 Logo 后通知会显示旧图标）。
 - **i18n**：新增/修改用户可见文案要同时更新 `res/values/strings.xml`（英文默认）和 `res/values-zh-rCN/strings.xml`。
 - 修复 bug 时用中文注释说明原因和修复依据（与现有代码一致）。

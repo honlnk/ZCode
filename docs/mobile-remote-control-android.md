@@ -27,3 +27,12 @@ RPC 协议，而是用原生入口承载现有 `/remote` 手机 Web 远控页面
 
 Android App 不创建独立 Agent runtime、local host 或 SSH/WSL/Docker session。手机端仍只能 attach
 到桌面窗口已经存在的 host。
+
+## 软键盘与输入
+
+`MainActivity` 显式配置 `android:windowSoftInputMode="adjustResize"`。不配置时系统解析为
+`adjustPan`，WebView 不随键盘缩放、键盘直接盖住页面底部，Chromium 的可视区计算与真实不一致，
+导致每次选词上屏或移动光标时页面整体上跳（录屏帧级运动分析实测：每次上屏触发约 550px 的滚动
+动画，弹/收键盘时约 850px）。`adjustResize` 下（Android 15+ edge-to-edge 中窗口 frame 不变，
+由 WebView 内建 IME insets 处理消化），页面 `dvh` 布局自然把输入框放键盘上方，打字全程零滚动。
+

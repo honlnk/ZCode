@@ -27,11 +27,18 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Bugfix: 不设 windowSoftInputMode 时系统解析为 adjustPan（dumpsys 实证 sim={adjust=pan}），
+             WebView 永远全屏不随键盘缩放、键盘直接盖住页面底部，Chromium 的可视区/光标滚动计算
+             与真实情况不一致，导致每次选词上屏或移动光标页面整体上跳 ~550px（约 200ms 滚动动画），
+             弹/收键盘时还会触发 ~850px 的大幅滚动；是否触发取决于输入框当时的绝对位置，表现为偶发。
+             adjustResize 下 WebView 内建 IME insets 处理生效（edge-to-edge 时窗口 frame 不变，
+             由 WebView 消化 insets），可视区正确，实测打字全程零滚动。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.Zcodemobile">
+            android:theme="@style/Theme.Zcodemobile"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
