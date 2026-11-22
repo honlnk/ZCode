@@ -23,6 +23,10 @@ ZCode 手机远控的 Android 壳 App（`zcode-android`，包名 `com.example.zc
 3. 打 tag `android-vX.Y.Z` 并推送，触发 `.github/workflows/build-android.yml`：CI 用 GitHub Secrets（`ANDROID_KEYSTORE_BASE64/PASSWORD/KEY_ALIAS`）签名构建 release APK，并创建 GitHub Release 挂 APK 资产，手机可直接下载。
 4. 签名只在 CI / 本地通过环境变量注入（`KEYSTORE_FILE` / `KEYSTORE_PASSWORD` / `KEY_ALIAS`，PKCS12 单密码约定），仓库内不保存任何密钥材料。
 
+## 本地构建与直装（日常迭代）
+
+本地 keystore 与 CI Secrets 同源：`~/.keystores/ZCode/zcode-android-release.keystore`，密码/alias 见同目录 `KEYINFO.txt`。注入上述三个环境变量后，`assembleDebug` 和 `assembleRelease` 都产出 **release keystore 签名**的 APK——debug 包（WebView 调试 + cleartext）与正式包同签名，可互相 `adb install -r` 覆盖：要调 WebView 就装 debug 包，调完装回 release 包，全程无需卸载、不丢最近链接和登录态。不注入环境变量时 debug 包退回 AGP 默认 `~/.android/debug.keystore`（与正式包签名不同，装它得先卸载，日常别这么干）。
+
 ## 代码结构与职责
 
 - `MainActivity.kt`：`remoteUrl` / `recentLinks` 状态唯一所有者；解析 deep link（`zcode://remote?...`、`https://zcode.z.ai/remote` intent-filter、EXTRA_TEXT 分享），管理保活服务与屏幕常亮生命周期。

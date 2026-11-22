@@ -43,6 +43,12 @@ android {
         debug {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             buildConfigField("String", "REMOTE_CONTROL_DEFAULT_URL", "\"https://zcode.z.ai/remote\"")
+            // 注入 KEYSTORE_FILE 时 debug 包也用 release keystore 签名：与正式包同签名
+            // 可互相 adb install -r 覆盖（需要 WebView 调试时装 debug、调完装回 release，
+            // 无需卸载、不丢数据）。不注入时保持 AGP 默认 debug.keystore，官方默认行为不变。
+            if (System.getenv("KEYSTORE_FILE") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         release {
             isMinifyEnabled = false
