@@ -1,6 +1,6 @@
 # packages/android — ZCode Android 远控壳
 
-ZCode 手机远控的 Android 壳 App（`zcode-android`，包名 `com.example.zcode_mobile`）。原生入口 + WebView 承载现有 `https://zcode.z.ai/remote` 手机 Web 远控页面。**不重写 Agent、relay 或 RPC 协议，不创建独立 Agent runtime / local host / 远程会话**——手机端只 attach 到桌面已有的 host，断线恢复依赖 Web 端 `web-remote-replayable` 语义。改动前先读 monorepo 根的 `docs/mobile-remote-control-android.md`。
+ZCode 手机远控的 Android 壳 App（`zcode-android`，包名 `com.example.zcode_mobile`）。原生入口 + WebView 承载现有 `https://zcode.z.ai/remote` 手机 Web 远控页面。**不重写 Agent、relay 或 RPC 协议，不创建独立 Agent runtime / local host / 远程会话**——手机端只 attach 到桌面已有的 host；壳只负责承载页面并让页面在后台保持可见（见「页面可见性」），真断线的恢复依赖 Web 端 `web-remote-replayable` 语义。改动前先读 monorepo 根的 `docs/mobile-remote-control-android.md`。
 
 本包是独立 Gradle 项目（不在 pnpm workspace 内），命令都在本目录用 `./gradlew` 执行；根仓库的 pnpm typecheck/lint 不适用。
 
@@ -29,11 +29,11 @@ ZCode 手机远控的 Android 壳 App（`zcode-android`，包名 `com.example.zc
 
 ## 代码结构与职责
 
-- `MainActivity.kt`：`remoteUrl` / `recentLinks` 状态唯一所有者；解析 deep link（`zcode://remote?...`、`https://zcode.z.ai/remote` intent-filter、EXTRA_TEXT 分享），管理保活服务与屏幕常亮生命周期。
+- `MainActivity.kt`：`remoteUrl` / `recentLinks` 状态唯一所有者；解析 deep link（`zcode://remote?...`、`https://zcode.z.ai/remote` intent-filter、EXTRA_TEXT 分享），管理保活服务与屏幕常亮生命周期。保活服务的启动统一走 `startKeepAliveService`：打开远控页时启动；`onResume` 与 `onTopResumedActivityChanged(true)` 时，若服务未运行（`RemoteControlKeepAliveService.isRunning`）则延后补拉（服务可能已被系统按时长上限停掉）。
 - `remote/RemoteControlUrlPolicy.kt`：URL 白名单，所有入口（手输、扫码、历史记录、WebView 导航）都必须经它校验。生产包唯一入口 `https://zcode.z.ai/remote*`；debug 包额外放行 localhost / 局域网 `/remote`（真机调本地 Vite 用）。OAuth 域族（`z.ai` / `bigmodel.cn` / `zhipuai.cn` 及子域）的主框架跳转必须留在 WebView 内，否则登录态落在系统浏览器、App 等不到回调。
-- `remote/RemoteControlKeepAliveService.kt`：前台服务（`dataSync` 类型）保活，只降低进程被杀概率，不是业务事实源。
+- `remote/RemoteControlKeepAliveService.kt`：前台服务（`dataSync` 类型）保活，只降低进程被杀概率，不是业务事实源。超时回调 `onTimeout` 的两个重载都要 `stopSelf()`；`startForeground` 被系统拒绝（`ForegroundServiceStartNotAllowedException`）时同样 `stopSelf()`，不能让异常抛出 `onStartCommand`。
 - `remote/RemoteControlRecentLinksStore.kt`：最近链接存 SharedPreferences（JSON，最多 5 条），读取时仍逐条过白名单校验。
-- `ui/RemoteControlApp.kt`：启动页 + 扫码页 + WebView 页三态。扫码用 CameraX + ML Kit（仅 QR Code）。WebView 相关见下方「坑」。
+- `ui/RemoteControlApp.kt`：启动页 + 扫码页 + WebView 页三态。扫码用 CameraX + ML Kit（仅 QR Code）。主 WebView 由 `createRemoteControlWebView` 创建，类型必须是 `RemoteControlWebView`。WebView 相关见下方「坑」。
 - `ui/theme/`：Material 3 主题与品牌色。
 
 ## 关键约束与坑
@@ -45,5 +45,7 @@ ZCode 手机远控的 Android 壳 App（`zcode-android`，包名 `com.example.zc
 - **WebView 安全基线**：`allowFileAccess/allowContentAccess=false`、`MIXED_CONTENT_NEVER_ALLOW`、UA 追加 `ZCodeAndroid/<version>`；debug 才开 WebView 调试（`usesCleartextTraffic` 也是 debug-only placeholder）。
 - **软键盘**：`MainActivity` 必须保持 `android:windowSoftInputMode="adjustResize"`。不配置时系统解析为 `adjustPan`，WebView 不随键盘缩放，Chromium 可视区计算错误，每次选词上屏/移动光标页面会整体上跳 ~550px（偶发，取决于输入框当时位置）；spec 见根仓库 `docs/mobile-remote-control-android.md`「软键盘与输入」。
 - **保活通知**：显式设置 `largeIcon` 为当前 Logo（vivo 等定制系统读应用图标缓存，换 Logo 后通知会显示旧图标）。
+- **页面可见性**：主 WebView 必须是 `RemoteControlWebView`（`onWindowVisibilityChanged` 固定上报 `VISIBLE`）。系统在 App 进后台时会把页面置为 `hidden`，远控页面据此挂起心跳，回前台必走重连探测并弹「正在自动重连」；固定上报后页面在后台保持可见、心跳不断，真断线仍由 Web 端恢复。依据是 WebView 把该方法转发给内核的内部路径（非公开约定），WebView 随系统更新，改动后必须真机回归。OAuth 弹窗用普通 `WebView`，不要套用；不要对主 WebView 调用 `onPause()` / `pauseTimers()` / `freeze()`，它们同样会让页面隐藏。
+- **前台服务时长**：targetSdk ≥ 35 时 `dataSync` 前台服务在后台 24 小时累计最多 6 小时，到期回调 `Service.onTimeout`。两个重载（Android 15 单参、16 起带前台服务类型）都必须保留并 `stopSelf()`，否则系统抛 `RemoteServiceException` 终止进程。额度耗尽后要等系统把进程记为 TOP 才重置，这笔记账是异步的，早于它的启动会被系统拒绝：拒绝异常从服务里的 `startForeground()` 抛出，而不是从 `startForegroundService()` 抛出，所以必须在服务内捕获并 `stopSelf()`（Activity 侧只接得住后者）。回前台后的补拉只在服务未运行时进行：`onResume` 里 post 出去，并在 `onTopResumedActivityChanged(true)`（系统确认进入 TOP）时再补一次。
 - **i18n**：新增/修改用户可见文案要同时更新 `res/values/strings.xml`（英文默认）和 `res/values-zh-rCN/strings.xml`。
 - 修复 bug 时用中文注释说明原因和修复依据（与现有代码一致）。

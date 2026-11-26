@@ -921,6 +921,29 @@ private fun parseFileChooserResult(resultCode: Int, data: Intent?): Array<Uri>? 
     return uris.takeIf { it.isNotEmpty() }?.toTypedArray()
 }
 
+/**
+ * 远控页专用 WebView：窗口可见性固定上报 VISIBLE。
+ *
+ * Bugfix: Activity 进后台（onStop）时系统把“窗口不可见”下发到 WebView，页面随之变为 hidden。
+ * 远控 Web 页面在 hidden 时会主动挂起心跳，回前台必走一次原连接探测并弹出“正在自动重连”；
+ * 心跳停久了桌面端还会把桥降级，回来需要重建。保活前台服务只能降低进程被杀概率，挡不住这一步。
+ * 这里对系统一律上报 VISIBLE，页面感知不到切后台：心跳在后台继续，回前台无需恢复。
+ *
+ * 依据：Chromium 判定页面可见只看“已附着窗口 && 窗口可见 && 未 onPause”，窗口可见性的唯一入口
+ * 就是 WebView.onWindowVisibilityChanged（protected，转发给 WebView 实现）。这条转发路径不是
+ * 公开约定，WebView 随系统更新，改动后必须真机回归。页面从窗口移除时 WebView 内部会自行置为
+ * hidden，不受这里影响。
+ *
+ * 只去掉“切后台”这一个触发源：断网、进程被回收等真断线仍由 Web 端重连逻辑处理。
+ * 不要用于 OAuth 弹窗；不要调用 onPause()/pauseTimers()/freeze()，它们同样会让页面隐藏。
+ */
+private class RemoteControlWebView(context: Context) : WebView(context) {
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        // 忽略系统下发的真实可见性。
+        super.onWindowVisibilityChanged(VISIBLE)
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 private fun createRemoteControlWebView(
     context: android.content.Context,
@@ -933,7 +956,7 @@ private fun createRemoteControlWebView(
 ): WebView {
     CookieManager.getInstance().setAcceptCookie(true)
 
-    return WebView(context).apply {
+    return RemoteControlWebView(context).apply {
         layoutParams = ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
